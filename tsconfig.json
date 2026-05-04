@@ -1,0 +1,21 @@
+{
+  "extends": "expo/tsconfig.base",
+  "noImplicitAny": false,
+  "compilerOptions": {
+    "strict": true,
+    "jsx": "preserve",
+    
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+, "firebase.js"  ]
+}
