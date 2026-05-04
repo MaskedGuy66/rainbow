@@ -1,7 +1,5 @@
 import {
   addDoc,
-  arrayRemove,
-  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -117,6 +115,21 @@ const GroupFunds: React.FC = () => {
   const [editPercentageModalVisible, setEditPercentageModalVisible] = useState(false);
   const [fundToEditPercentages, setFundToEditPercentages] = useState<Fund | null>(null);
   const [editingPercentages, setEditingPercentages] = useState<{[userId: string]: number}>({});
+
+  // Hàm helper chia đều phần trăm
+  const distributePercentagesEqually = (memberIds: string[]): {[userId: string]: number} => {
+    const percentages: {[userId: string]: number} = {};
+    const memberCount = memberIds.length;
+    if (memberCount === 0) return percentages;
+    const basePercentage = 100 / memberCount;
+    const roundedPercentage = Math.floor(basePercentage * 100) / 100;
+    const totalRounded = roundedPercentage * memberCount;
+    const remainder = 100 - totalRounded;
+    memberIds.forEach((memberId, index) => {
+      percentages[memberId] = Number((index < Math.round(remainder * 100) ? roundedPercentage + 0.01 : roundedPercentage).toFixed(2));
+    });
+    return percentages;
+  };
 
   const loadBankAccount = async () => {
     const user = auth.currentUser;
@@ -503,29 +516,25 @@ const GroupFunds: React.FC = () => {
   const addMembersToFund = async () => {
     if (!fundToAddMembers) return;
 
-    const totalCurrentPercentage = getTotalPercentage(fundToAddMembers.memberPercentages || {});
-    const totalNewPercentage = getTotalPercentage(newMemberPercentages);
-    const combinedTotal = totalCurrentPercentage + totalNewPercentage;
-
-    if (combinedTotal !== 100) {
-      Alert.alert('Lỗi', `Tổng phần trăm phải bằng 100%! Hiện tại: ${combinedTotal}%`);
+    const selectedNewMembers = Object.keys(newMemberPercentages);
+    
+    if (selectedNewMembers.length === 0) {
+      Alert.alert('Lỗi', 'Vui lòng chọn ít nhất một thành viên để thêm!');
       return;
     }
 
     try {
       const fundRef = doc(db, 'groupFunds', fundToAddMembers.id);
       
-      const updatedMemberPercentages = {
-        ...fundToAddMembers.memberPercentages,
-        ...newMemberPercentages
-      };
+      const updatedMembers = [...fundToAddMembers.members, ...selectedNewMembers];
+      const updatedMemberPercentages = distributePercentagesEqually(updatedMembers);
 
       await updateDoc(fundRef, {
-        members: arrayUnion(...Object.keys(newMemberPercentages)),
+        members: updatedMembers,
         memberPercentages: updatedMemberPercentages
       });
 
-      Alert.alert('Thành công', 'Đã thêm thành viên vào quỹ!');
+      Alert.alert('Thành công', `Đã thêm ${selectedNewMembers.length} thành viên và tự động chia đều phần trăm!`);
       setAddMemberModalVisible(false);
       setNewMemberPercentages({});
       setFundToAddMembers(null);
@@ -554,7 +563,7 @@ const GroupFunds: React.FC = () => {
 
     Alert.alert(
       'Xác nhận xóa thành viên',
-      `Bạn có chắc muốn xóa ${getUserDisplayName(memberId)} khỏi quỹ?`,
+      `Bạn có chắc muốn xóa ${getUserDisplayName(memberId)} khỏi quỹ?\nPhần trăm sẽ được tự động chia đều cho các thành viên còn lại.`,
       [
         { text: 'Hủy', style: 'cancel' },
         {
@@ -564,11 +573,15 @@ const GroupFunds: React.FC = () => {
             try {
               const fundRef = doc(db, 'groupFunds', fundId);
               
+              const updatedMembers = fund.members.filter(id => id !== memberId);
+              const updatedMemberPercentages = distributePercentagesEqually(updatedMembers);
+              
               await updateDoc(fundRef, {
-                members: arrayRemove(memberId),
+                members: updatedMembers,
+                memberPercentages: updatedMemberPercentages
               });
 
-              Alert.alert('Thành công', `Đã xóa ${getUserDisplayName(memberId)} khỏi quỹ!`);
+              Alert.alert('Thành công', `Đã xóa ${getUserDisplayName(memberId)} khỏi quỹ và tự động chia đều phần trăm!`);
             } catch (error) {
               console.error('Lỗi xóa thành viên:', error);
               Alert.alert('Lỗi', 'Không thể xóa thành viên!');
@@ -794,10 +807,8 @@ const GroupFunds: React.FC = () => {
       const fund = funds.find(f => f.id === fundId);
       if (!fund) return;
 
-      // Tính số người cần duyệt: mặc định cần 2 người, nhưng nếu có trưởng nhóm thì chỉ cần 1
       let neededApprovals = 2;
       
-      // Nếu quỹ chỉ có 2 người thì cần chủ quỹ duyệt (chỉ cần 1)
       if (fund.members.length === 2) {
         neededApprovals = 1;
       }
@@ -841,20 +852,14 @@ const GroupFunds: React.FC = () => {
       const fundRef = doc(db, 'groupFunds', selectedFund.id);
 
       const updatedApprovedBy = [...withdrawal.approvedBy, user.uid];
-
-      // Tính toán số người cần duyệt: nếu có trưởng nhóm trong danh sách đồng ý thì chỉ cần 1
       let neededApprovals = withdrawal.neededApprovals;
-      
-      // Kiểm tra xem trưởng nhóm có trong danh sách đồng ý không
       const hasCreatorApproval = updatedApprovedBy.includes(selectedFund.createdBy);
       
-      // Nếu trưởng nhóm đã đồng ý, chỉ cần 1 người duyệt
       if (hasCreatorApproval) {
         neededApprovals = 1;
       }
 
       if (updatedApprovedBy.length >= neededApprovals) {
-        // Đủ số người đồng ý - thực hiện rút tiền
         const fundSnap = await getDoc(fundRef);
         if (!fundSnap.exists()) return;
 
@@ -870,7 +875,6 @@ const GroupFunds: React.FC = () => {
           approvedBy: updatedApprovedBy,
         });
 
-        // Cộng tiền vào tài khoản người rút
         const userBankRef = collection(db, "users", withdrawal.userId, "bankAccount");
         const userBankSnapshot = await getDocs(userBankRef);
         if (!userBankSnapshot.empty) {
@@ -890,7 +894,6 @@ const GroupFunds: React.FC = () => {
 
         Alert.alert('Thành công', `Đã duyệt và chuyển ${withdrawal.amount.toLocaleString()}đ cho ${withdrawal.userName}!`);
       } else {
-        // Chưa đủ, chỉ cập nhật danh sách đồng ý
         await updateDoc(withdrawalRef, {
           approvedBy: updatedApprovedBy,
         });
@@ -946,9 +949,28 @@ const GroupFunds: React.FC = () => {
     const user = auth.currentUser;
     if (!user) return;
 
+    const fund = funds.find(f => f.id === fundId);
+    if (!fund) return;
+
+    if (fund.createdBy === user.uid) {
+      Alert.alert(
+        'Chủ quỹ không thể rời',
+        'Bạn là chủ quỹ. Bạn có muốn xóa quỹ này không?',
+        [
+          { text: 'Hủy', style: 'cancel' },
+          {
+            text: 'Xóa quỹ',
+            style: 'destructive',
+            onPress: () => deleteFund(fundId),
+          },
+        ]
+      );
+      return;
+    }
+
     Alert.alert(
-      'Xác nhận',
-      'Bạn có chắc muốn rời khỏi quỹ này?',
+      'Xác nhận rời quỹ',
+      'Bạn có chắc muốn rời khỏi quỹ này?\nPhần trăm sẽ được tự động chia đều cho các thành viên còn lại.',
       [
         { text: 'Hủy', style: 'cancel' },
         {
@@ -958,11 +980,15 @@ const GroupFunds: React.FC = () => {
             try {
               const fundRef = doc(db, 'groupFunds', fundId);
               
+              const updatedMembers = fund.members.filter(id => id !== user.uid);
+              const updatedMemberPercentages = distributePercentagesEqually(updatedMembers);
+              
               await updateDoc(fundRef, {
-                members: arrayRemove(user.uid),
+                members: updatedMembers,
+                memberPercentages: updatedMemberPercentages
               });
 
-              Alert.alert('Thành công', 'Đã rời khỏi quỹ!');
+              Alert.alert('Thành công', 'Đã rời khỏi quỹ và tự động chia đều phần trăm cho các thành viên còn lại!');
             } catch (error) {
               console.error('Lỗi rời khỏi quỹ:', error);
               Alert.alert('Lỗi', 'Không thể rời khỏi quỹ!');
@@ -1182,54 +1208,54 @@ const GroupFunds: React.FC = () => {
       {funds.length > 0 ? (
         funds.map(fund => (
           <View key={fund.id} style={styles.fundCard}>
-<View style={styles.fundHeader}>
-  <View style={styles.fundTitleRow}>
-    <Text style={styles.fundName} numberOfLines={2}>
-      🎯 {fund.name}
-    </Text>
-    <View style={styles.fundActions}>
-      {pendingWithdrawals[fund.id] && pendingWithdrawals[fund.id].length > 0 && (
-        <TouchableOpacity 
-          style={styles.approvalButton}
-          onPress={() => openApprovalModal(fund)}
-        >
-          <Text style={styles.approvalButtonText}>✅ {pendingWithdrawals[fund.id].length}</Text>
-        </TouchableOpacity>
-      )}
-      {isFundCreator(fund) && (
-        <TouchableOpacity 
-          style={styles.editPercentageButton}
-          onPress={() => openEditPercentageModal(fund)}
-        >
-          <Text style={styles.editPercentageButtonText}>✏️ %</Text>
-        </TouchableOpacity>
-      )}
-      <TouchableOpacity 
-        style={styles.addMemberButton}
-        onPress={() => openAddMemberModal(fund)}
-      >
-        <Text style={styles.addMemberButtonText}>👥 Thêm</Text>
-      </TouchableOpacity>
-      <TouchableOpacity 
-        style={styles.withdrawButton}
-        onPress={() => openWithdrawModal(fund)}
-      >
-        <Text style={styles.withdrawButtonText}>💸 Rút</Text>
-      </TouchableOpacity>
-      <TouchableOpacity 
-        style={styles.leaveButton}
-        onPress={() => leaveFund(fund.id)}
-      >
-        <Text style={styles.leaveButtonText}>🚪 Rời</Text>
-      </TouchableOpacity>
-      {isFundCreator(fund) && (
-        <TouchableOpacity onPress={() => deleteFund(fund.id)}>
-          <Text style={styles.deleteText}>🗑️</Text>
-        </TouchableOpacity>
-      )}
-    </View>
-  </View>
-</View>
+            <View style={styles.fundHeader}>
+              <View style={styles.fundTitleRow}>
+                <Text style={styles.fundName} numberOfLines={2}>
+                  🎯 {fund.name}
+                </Text>
+                <View style={styles.fundActions}>
+                  {pendingWithdrawals[fund.id] && pendingWithdrawals[fund.id].length > 0 && (
+                    <TouchableOpacity 
+                      style={styles.approvalButton}
+                      onPress={() => openApprovalModal(fund)}
+                    >
+                      <Text style={styles.approvalButtonText}>✅ {pendingWithdrawals[fund.id].length}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {isFundCreator(fund) && (
+                    <TouchableOpacity 
+                      style={styles.editPercentageButton}
+                      onPress={() => openEditPercentageModal(fund)}
+                    >
+                      <Text style={styles.editPercentageButtonText}>✏️ %</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity 
+                    style={styles.addMemberButton}
+                    onPress={() => openAddMemberModal(fund)}
+                  >
+                    <Text style={styles.addMemberButtonText}>👥 Thêm</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={styles.withdrawButton}
+                    onPress={() => openWithdrawModal(fund)}
+                  >
+                    <Text style={styles.withdrawButtonText}>💸 Rút</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={styles.leaveButton}
+                    onPress={() => leaveFund(fund.id)}
+                  >
+                    <Text style={styles.leaveButtonText}>🚪 Rời</Text>
+                  </TouchableOpacity>
+                  {isFundCreator(fund) && (
+                    <TouchableOpacity onPress={() => deleteFund(fund.id)}>
+                      <Text style={styles.deleteText}>🗑️</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            </View>
             
             <Text style={styles.fundDescription}>{fund.description}</Text>
             
@@ -1609,7 +1635,7 @@ const GroupFunds: React.FC = () => {
         </View>
       </Modal>
 
-      {/* Modal sửa phần trăm - ĐÃ THÊM SCROLLVIEW */}
+      {/* Modal sửa phần trăm */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -1625,7 +1651,6 @@ const GroupFunds: React.FC = () => {
                 <Text style={styles.modalFundName}>Quỹ: {fundToEditPercentages.name}</Text>
                 <Text style={styles.label}>Điều chỉnh phần trăm cho từng thành viên:</Text>
 
-                {/* THÊM SCROLLVIEW Ở ĐÂY */}
                 <ScrollView style={styles.percentageEditList}>
                   {fundToEditPercentages.members.map(memberId => (
                     <View key={memberId} style={styles.percentageEditItem}>
@@ -1695,54 +1720,63 @@ const GroupFunds: React.FC = () => {
             {fundToAddMembers && (
               <>
                 <Text style={styles.modalFundName}>Quỹ: {fundToAddMembers.name}</Text>
-                <Text style={styles.label}>Chọn bạn bè và phân bổ phần trăm:</Text>
+                <Text style={styles.label}>Chọn bạn bè để thêm vào quỹ:</Text>
+                <Text style={styles.autoDistributeNote}>
+                  ✨ Phần trăm sẽ được tự động chia đều cho tất cả thành viên sau khi thêm
+                </Text>
 
                 {getAvailableFriends(fundToAddMembers).length > 0 ? (
                   <View style={styles.availableFriendsList}>
                     {getAvailableFriends(fundToAddMembers).map(friend => (
-                      <View key={friend.id} style={styles.friendWithPercentage}>
-                        <View style={styles.friendItem}>
-                          <Text style={styles.friendText}>
-                            👤 {friend.name || friend.email.split('@')[0] || 'User'}
-                          </Text>
-                        </View>
-                        
-                        <View style={styles.percentageInputContainer}>
-                          <TextInput
-                            style={styles.percentageInput}
-                            placeholder="0"
-                            keyboardType="numeric"
-                            value={newMemberPercentages[friend.id]?.toString() || ''}
-                            onChangeText={(text) => updateNewMemberPercentage(friend.id, Number(text) || 0)}
-                          />
-                          <Text style={styles.percentageSymbol}>%</Text>
-                        </View>
-                      </View>
+                      <TouchableOpacity
+                        key={friend.id}
+                        style={[
+                          styles.friendSelectItem,
+                          newMemberPercentages[friend.id] !== undefined ? styles.selectedFriendItem : undefined
+                        ]}
+                        onPress={() => {
+                          setNewMemberPercentages(prev => {
+                            const newPercentages = {...prev};
+                            if (newPercentages[friend.id] !== undefined) {
+                              delete newPercentages[friend.id];
+                            } else {
+                              newPercentages[friend.id] = 0;
+                            }
+                            return newPercentages;
+                          });
+                        }}
+                      >
+                        <Text style={styles.friendSelectText}>
+                          👤 {friend.name || friend.email.split('@')[0] || 'User'}
+                        </Text>
+                        {newMemberPercentages[friend.id] !== undefined && (
+                          <Text style={styles.selectedIcon}>✅</Text>
+                        )}
+                      </TouchableOpacity>
                     ))}
                   </View>
                 ) : (
                   <Text style={styles.noFriendsText}>Không có bạn bè nào để thêm</Text>
                 )}
 
-                <View style={styles.totalPercentage}>
-                  <Text style={styles.totalPercentageText}>
-                    Tổng phần trăm mới: {getTotalPercentage(newMemberPercentages)}%
+                <View style={styles.selectedCountContainer}>
+                  <Text style={styles.selectedCountText}>
+                    Đã chọn: {Object.keys(newMemberPercentages).length} thành viên
                   </Text>
-                  <Text style={styles.totalPercentageText}>
-                    Tổng phần trăm hiện tại: {getTotalPercentage(fundToAddMembers.memberPercentages || {})}%
-                  </Text>
-                  <Text style={styles.totalPercentageText}>
-                    Tổng sau khi thêm: {getTotalPercentage(fundToAddMembers.memberPercentages || {}) + getTotalPercentage(newMemberPercentages)}%
-                  </Text>
-                  {getTotalPercentage(fundToAddMembers.memberPercentages || {}) + getTotalPercentage(newMemberPercentages) !== 100 && (
-                    <Text style={styles.percentageWarning}>⚠️ Tổng phần trăm phải bằng 100%</Text>
+                  {Object.keys(newMemberPercentages).length > 0 && (
+                    <Text style={styles.afterAddInfo}>
+                      Sau khi thêm, quỹ sẽ có {fundToAddMembers.members.length + Object.keys(newMemberPercentages).length} thành viên
+                    </Text>
                   )}
                 </View>
 
                 <View style={styles.modalButtons}>
                   <TouchableOpacity 
                     style={[styles.modalButton, styles.cancelButton]}
-                    onPress={() => setAddMemberModalVisible(false)}
+                    onPress={() => {
+                      setAddMemberModalVisible(false);
+                      setNewMemberPercentages({});
+                    }}
                   >
                     <Text style={styles.cancelButtonText}>Hủy</Text>
                   </TouchableOpacity>
@@ -1750,12 +1784,14 @@ const GroupFunds: React.FC = () => {
                     style={[
                       styles.modalButton, 
                       styles.addMemberConfirmButton,
-                      (getTotalPercentage(fundToAddMembers.memberPercentages || {}) + getTotalPercentage(newMemberPercentages) !== 100) ? styles.disabledButton : undefined
+                      Object.keys(newMemberPercentages).length === 0 ? styles.disabledButton : undefined
                     ]}
                     onPress={addMembersToFund}
-                    disabled={getTotalPercentage(fundToAddMembers.memberPercentages || {}) + getTotalPercentage(newMemberPercentages) !== 100}
+                    disabled={Object.keys(newMemberPercentages).length === 0}
                   >
-                    <Text style={styles.addMemberConfirmButtonText}>Thêm thành viên</Text>
+                    <Text style={styles.addMemberConfirmButtonText}>
+                      Thêm {Object.keys(newMemberPercentages).length} thành viên
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </>
@@ -2034,24 +2070,24 @@ const styles = StyleSheet.create({
     borderColor: '#fff0f5',
   },
   fundHeader: {
-  marginBottom: 8,
-},
-fundTitleRow: {
-  flexDirection: 'column',
-},
-fundName: {
-  fontSize: 18,
-  fontWeight: 'bold',
-  color: '#d63384',
-  marginBottom: 8, // Thêm khoảng cách dưới tên
-  flexWrap: 'wrap',
-},
-fundActions: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'flex-start', // Căn trái các nút
-  flexWrap: 'wrap', // Cho phép xuống dòng nếu cần
-},
+    marginBottom: 8,
+  },
+  fundTitleRow: {
+    flexDirection: 'column',
+  },
+  fundName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#d63384',
+    marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  fundActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    flexWrap: 'wrap',
+  },
   approvalButton: {
     backgroundColor: '#FFD700',
     paddingHorizontal: 8,
@@ -2459,6 +2495,59 @@ fundActions: {
   availableFriendsList: {
     maxHeight: 200,
   },
+  autoDistributeNote: {
+    fontSize: 12,
+    color: '#4CAF50',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginBottom: 12,
+    backgroundColor: '#f0fff0',
+    padding: 8,
+    borderRadius: 8,
+  },
+  friendSelectItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  selectedFriendItem: {
+    backgroundColor: '#e8f5e9',
+    borderColor: '#4CAF50',
+  },
+  friendSelectText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+  },
+  selectedIcon: {
+    fontSize: 16,
+    color: '#4CAF50',
+  },
+  selectedCountContainer: {
+    backgroundColor: '#f0f8ff',
+    padding: 12,
+    borderRadius: 12,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  selectedCountText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#0077b6',
+    textAlign: 'center',
+  },
+  afterAddInfo: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 4,
+  },
   pendingWithdrawalsList: {
     maxHeight: 400,
   },
@@ -2505,13 +2594,6 @@ fundActions: {
   approvalButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-  },
-  ModalApprovalButton: {
-    flex: 1,
-    padding: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginHorizontal: 4,
   },
   approveButton: {
     backgroundColor: '#4CAF50',

@@ -1,15 +1,18 @@
 import {
   addDoc,
   collection,
-  deleteDoc,
   doc,
-  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
   Timestamp,
   updateDoc
 } from "firebase/firestore";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
+  Animated,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,683 +20,407 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import BankSimulator from "../components/bank-simulator";
 import { auth, db } from "../firebase";
 
+// Định nghĩa kiểu dữ liệu cho mục tiêu (Goal)
 interface Goal {
   id: string;
   name: string;
   targetAmount: number;
   currentAmount: number;
-  createdAt?: any;
 }
 
-interface BankAccount {
-  id: string;
-  balance: number;
-}
-
-const HeoDat: React.FC = () => {
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [bankAccount, setBankAccount] = useState<BankAccount | null>(null);
-  const [goalName, setGoalName] = useState("");
-  const [goalAmount, setGoalAmount] = useState("");
-
-  // 🔹 Lấy danh sách heo đất và tài khoản ngân hàng từ Firebase
-  const loadData = async () => {
-    const user = auth.currentUser;
-    if (!user) {
-      Alert.alert("Lỗi", "Vui lòng đăng nhập!");
-      return;
-    }
-
-    try {
-      // Lấy danh sách heo đất
-      const goalsRef = collection(db, "users", user.uid, "goals");
-      const goalsSnapshot = await getDocs(goalsRef);
-      const goalsData = goalsSnapshot.docs.map(doc => ({ 
-        id: doc.id, 
-        name: doc.data().name,
-        targetAmount: doc.data().targetAmount || doc.data().amount || 0,
-        currentAmount: doc.data().currentAmount || doc.data().current || 0,
-        createdAt: doc.data().createdAt,
-      })) as Goal[];
-      setGoals(goalsData);
-
-      // Lấy tài khoản ngân hàng
-      const bankRef = collection(db, "users", user.uid, "bankAccount");
-      const bankSnapshot = await getDocs(bankRef);
-      
-      if (bankSnapshot.empty) {
-        // Tạo tài khoản ngân hàng mới nếu chưa có
-        const newBankAccount = {
-          balance: 0,
-          createdAt: Timestamp.now(),
-        };
-        const bankDocRef = await addDoc(collection(db, "users", user.uid, "bankAccount"), newBankAccount);
-        setBankAccount({ id: bankDocRef.id, balance: 0 });
-      } else {
-        const bankData = bankSnapshot.docs[0];
-        setBankAccount({ 
-          id: bankData.id, 
-          balance: bankData.data().balance || 0 
-        });
-      }
-    } catch (error) {
-      console.error("Lỗi khi tải dữ liệu:", error);
-      Alert.alert("Lỗi", "Không thể tải dữ liệu!");
-    }
-  };
+/**
+ * Component con hiển thị từng ô mục tiêu (Heo đất)
+ * Xử lý hiệu ứng Animation khi hoàn thành
+ */
+const GoalCard = ({ 
+  goal, 
+  index, 
+  startDeposit 
+}: { 
+  goal: Goal; 
+  index: number; 
+  startDeposit: (index: number, amount: number) => void; 
+}) => {
+  const isCompleted = goal.currentAmount >= goal.targetAmount;
+  const progress = Math.min(goal.currentAmount / goal.targetAmount, 1);
+  
+  // Khởi tạo giá trị Animation (độ mờ từ 0 đến 1)
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    loadData();
-  }, []);
-
-  // 🔹 Cập nhật số dư tài khoản ngân hàng
-  const updateBankBalance = async (newBalance: number) => {
-    const user = auth.currentUser;
-    if (!user || !bankAccount) return;
-
-    try {
-      const bankRef = doc(db, "users", user.uid, "bankAccount", bankAccount.id);
-      await updateDoc(bankRef, { balance: newBalance });
-      setBankAccount({ ...bankAccount, balance: newBalance });
-    } catch (error) {
-      console.error("Lỗi khi cập nhật số dư:", error);
-      Alert.alert("Lỗi", "Không thể cập nhật số dư!");
+    if (isCompleted) {
+      // Chạy hiệu ứng hiện chữ "Hoàn thành" trong 800ms
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      // Nếu chưa hoàn thành (hoặc bị trừ tiền) thì reset về 0
+      fadeAnim.setValue(0);
     }
-  };
+  }, [isCompleted]);
 
-  // 🔹 Cập nhật heo đất
-  const updateGoal = async (goalId: string, updates: any) => {
+  return (
+    <View style={[
+      styles.goalCard, 
+      isCompleted && styles.completedCard // Chuyển nền xám nếu xong
+    ]}>
+      
+      {/* Lớp phủ chữ Hoàn Thành hiện lên bằng Animation */}
+      {isCompleted && (
+        <Animated.View style={[styles.completedOverlay, { opacity: fadeAnim }]}>
+          <View style={styles.completedBadge}>
+            <Text style={styles.completedText}>✨ HOÀN THÀNH ✨</Text>
+          </View>
+        </Animated.View>
+      )}
+
+      <View style={styles.goalHeader}>
+        <Text style={[styles.goalTitle, isCompleted && styles.grayText]}>
+          {goal.name}
+        </Text>
+        <Text style={[styles.goalPercent, isCompleted && styles.grayText]}>
+          {Math.round(progress * 100)}%
+        </Text>
+      </View>
+
+      {/* Thanh tiến trình */}
+      <View style={styles.progressBarBg}>
+        <View 
+          style={[
+            styles.progressBarFill, 
+            { width: `${progress * 100}%` },
+            isCompleted && { backgroundColor: '#9e9e9e' } // Thanh tiến trình màu xám
+          ]} 
+        />
+      </View>
+
+      <Text style={styles.goalMoney}>
+        {goal.currentAmount.toLocaleString()} / {goal.targetAmount.toLocaleString()} VND
+      </Text>
+
+      {/* Nếu đã xong thì hiện thông báo, chưa xong thì hiện ô nhập tiền */}
+      {!isCompleted ? (
+        <ActionInput 
+          actionText="Bỏ heo" 
+          onAction={(val) => startDeposit(index, val)} 
+        />
+      ) : (
+        <View style={styles.congratsContainer}>
+          <Text style={styles.congratsText}>Chúc mừng! Bạn đã đạt mục tiêu! 🎉</Text>
+        </View>
+      )}
+    </View>
+  );
+};
+
+/**
+ * Component chính HeoDat
+ */
+const HeoDat: React.FC = () => {
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [bankBalance, setBankBalance] = useState(0);
+  const [isBankLinked, setIsBankLinked] = useState(false);
+  const [loading, setLoading] = useState(true);
+  
+  const [goalName, setGoalName] = useState("");
+  const [goalAmount, setGoalAmount] = useState("");
+  
+  const [showBankModal, setShowBankModal] = useState(false);
+  const [modalMode, setModalMode] = useState<"link" | "otp_only">("link");
+  const [pendingTx, setPendingTx] = useState<{index: number, amount: number} | null>(null);
+
+  useEffect(() => {
     const user = auth.currentUser;
     if (!user) return;
 
-    try {
-      const goalRef = doc(db, "users", user.uid, "goals", goalId);
-      await updateDoc(goalRef, updates);
-    } catch (error) {
-      console.error("Lỗi khi cập nhật heo đất:", error);
-      Alert.alert("Lỗi", "Không thể cập nhật heo đất!");
-    }
-  };
+    // Lắng nghe danh sách heo đất
+    const goalsRef = collection(db, "users", user.uid, "goals");
+    const q = query(goalsRef, orderBy("createdAt", "desc"));
+    const unsubGoals = onSnapshot(q, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Goal));
+      setGoals(data);
+      setLoading(false);
+    });
 
-  // 🔹 Thêm heo đất mới
+    // Lắng nghe số dư ngân hàng
+    const bankRef = doc(db, "users", user.uid, "bankAccount", "primary");
+    const unsubBank = onSnapshot(bankRef, (snap) => {
+      if (snap.exists()) {
+        setBankBalance(snap.data().balance || 0);
+        setIsBankLinked(true);
+      } else {
+        setIsBankLinked(false);
+      }
+    });
+
+    return () => { 
+      unsubGoals(); 
+      unsubBank(); 
+    };
+  }, []);
+
   const createGoal = async () => {
-    if (!goalName || !goalAmount) {
-      return Alert.alert("Lỗi", "Vui lòng nhập tên và số tiền mục tiêu!");
-    }
-
-    const user = auth.currentUser;
-    if (!user) {
-      Alert.alert("Lỗi", "Vui lòng đăng nhập!");
-      return;
+    const amount = Number(goalAmount);
+    if (!goalName || !goalAmount || amount <= 0) {
+      return Alert.alert("Lỗi", "Vui lòng nhập tên và số tiền mục tiêu hợp lệ!");
     }
 
     try {
-      const goalsRef = collection(db, "users", user.uid, "goals");
-      await addDoc(goalsRef, {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      await addDoc(collection(db, "users", user.uid, "goals"), {
         name: goalName,
-        targetAmount: Number(goalAmount),
+        targetAmount: amount,
         currentAmount: 0,
-        createdAt: Timestamp.now(),
+        createdAt: Timestamp.now()
       });
 
-      Alert.alert("Thành công", "Đã thêm heo đất mới!");
       setGoalName("");
       setGoalAmount("");
-      loadData();
-    } catch (error) {
-      console.error("Lỗi khi thêm heo đất:", error);
-      Alert.alert("Lỗi", "Không thể thêm heo đất!");
+      Alert.alert("Thành công", "Đã mua thêm một chú heo đất mới! 🐷");
+    } catch (e) {
+      Alert.alert("Lỗi", "Không thể tạo mục tiêu tiết kiệm.");
     }
   };
 
-  // 🔹 Nạp tiền vào tài khoản ngân hàng
-  const depositToBank = async (amount: number) => {
-    if (amount <= 0) return Alert.alert("Lỗi", "Số tiền không hợp lệ!");
+  const startDeposit = (index: number, amount: number) => {
+    if (!isBankLinked) return Alert.alert("Lỗi", "Vui lòng liên kết ngân hàng trước!");
+    if (amount <= 0) return Alert.alert("Lỗi", "Số tiền phải lớn hơn 0!");
+    if (bankBalance < amount) return Alert.alert("Lỗi", "Số dư ngân hàng không đủ!");
     
-    if (!bankAccount) {
-      Alert.alert("Lỗi", "Tài khoản ngân hàng chưa sẵn sàng!");
-      return;
-    }
-
-    const newBalance = bankAccount.balance + amount;
-    await updateBankBalance(newBalance);
-    Alert.alert("Thành công", `Đã nạp ${amount.toLocaleString()}đ vào tài khoản!`);
+    setPendingTx({ index, amount });
+    setModalMode("otp_only");
+    setShowBankModal(true);
   };
 
-  // 🔹 Rút tiền từ tài khoản ngân hàng
-  const withdrawFromBank = async (amount: number) => {
-    if (amount <= 0) return Alert.alert("Lỗi", "Số tiền không hợp lệ!");
-    
-    if (!bankAccount) {
-      Alert.alert("Lỗi", "Tài khoản ngân hàng chưa sẵn sàng!");
-      return;
-    }
+  const handleTransactionSuccess = async (newBalance: number) => {
+    if (modalMode === "otp_only" && pendingTx) {
+      try {
+        const user = auth.currentUser;
+        if (!user) return;
 
-    if (bankAccount.balance < amount) {
-      return Alert.alert("Lỗi", "Không đủ tiền trong tài khoản ngân hàng!");
-    }
+        const goal = goals[pendingTx.index];
+        const goalRef = doc(db, "users", user.uid, "goals", goal.id);
+        
+        await updateDoc(goalRef, { 
+          currentAmount: goal.currentAmount + pendingTx.amount 
+        });
 
-    const newBalance = bankAccount.balance - amount;
-    await updateBankBalance(newBalance);
-    Alert.alert("Thành công", `Đã rút ${amount.toLocaleString()}đ từ tài khoản!`);
+        setPendingTx(null);
+      } catch (error) {
+        Alert.alert("Lỗi", "Cập nhật dữ liệu thất bại.");
+      }
+    }
+    setBankBalance(newBalance);
+    setShowBankModal(false);
   };
 
-  // 🔹 Nạp tiền vào heo đất (từ tài khoản ngân hàng)
-  const depositToPiggy = async (goalIndex: number, amount: number) => {
-    if (amount <= 0) return Alert.alert("Lỗi", "Số tiền không hợp lệ!");
-    
-    if (!bankAccount) {
-      Alert.alert("Lỗi", "Tài khoản ngân hàng chưa sẵn sàng!");
-      return;
-    }
-
-    if (bankAccount.balance < amount) {
-      return Alert.alert("Lỗi", "Không đủ tiền trong tài khoản ngân hàng!");
-    }
-
-    const goal = goals[goalIndex];
-    const newGoalAmount = goal.currentAmount + amount;
-    const newBankBalance = bankAccount.balance - amount;
-
-    try {
-      // Cập nhật cả heo đất và tài khoản ngân hàng
-      await Promise.all([
-        updateGoal(goal.id, { currentAmount: newGoalAmount }),
-        updateBankBalance(newBankBalance)
-      ]);
-
-      // Cập nhật UI
-      const updatedGoals = [...goals];
-      updatedGoals[goalIndex].currentAmount = newGoalAmount;
-      setGoals(updatedGoals);
-
-      Alert.alert("Thành công", `Đã nạp ${amount.toLocaleString()}đ vào heo đất "${goal.name}"!`);
-    } catch (error) {
-      Alert.alert("Lỗi", "Không thể nạp tiền vào heo đất!");
-    }
-  };
-
-  // 🔹 Rút tiền ra khỏi heo đất (về tài khoản ngân hàng)
-  const withdrawFromPiggy = async (goalIndex: number, amount: number) => {
-    if (amount <= 0) return Alert.alert("Lỗi", "Số tiền không hợp lệ!");
-    
-    if (!bankAccount) {
-      Alert.alert("Lỗi", "Tài khoản ngân hàng chưa sẵn sàng!");
-      return;
-    }
-
-    const goal = goals[goalIndex];
-    if (goal.currentAmount < amount) {
-      return Alert.alert("Lỗi", "Không đủ tiền trong heo đất!");
-    }
-
-    const newGoalAmount = goal.currentAmount - amount;
-    const newBankBalance = bankAccount.balance + amount;
-
-    try {
-      // Cập nhật cả heo đất và tài khoản ngân hàng
-      await Promise.all([
-        updateGoal(goal.id, { currentAmount: newGoalAmount }),
-        updateBankBalance(newBankBalance)
-      ]);
-
-      // Cập nhật UI
-      const updatedGoals = [...goals];
-      updatedGoals[goalIndex].currentAmount = newGoalAmount;
-      setGoals(updatedGoals);
-
-      Alert.alert("Thành công", `Đã rút ${amount.toLocaleString()}đ từ heo đất "${goal.name}"!`);
-    } catch (error) {
-      Alert.alert("Lỗi", "Không thể rút tiền từ heo đất!");
-    }
-  };
-
-  // 🔹 Xóa heo đất (chuyển tiền về tài khoản ngân hàng)
-  const deleteGoal = async (goalIndex: number) => {
-    const goal = goals[goalIndex];
-    
-    Alert.alert(
-      "Xác nhận", 
-      goal.currentAmount > 0 
-        ? `Bạn có chắc muốn xóa heo đất "${goal.name}"?\n\nSố tiền ${goal.currentAmount.toLocaleString()}đ sẽ được chuyển về tài khoản ngân hàng.`
-        : `Bạn có chắc muốn xóa heo đất "${goal.name}"?`,
-      [
-        { text: "Hủy", style: "cancel" },
-        {
-          text: "Xóa",
-          style: "destructive",
-          onPress: async () => {
-            const user = auth.currentUser;
-            if (!user || !bankAccount) return;
-
-            try {
-              // Chuyển tiền từ heo đất về tài khoản ngân hàng
-              if (goal.currentAmount > 0) {
-                const newBankBalance = bankAccount.balance + goal.currentAmount;
-                await updateBankBalance(newBankBalance);
-              }
-
-              // Xóa heo đất
-              const goalRef = doc(db, "users", user.uid, "goals", goal.id);
-              await deleteDoc(goalRef);
-              
-              // Cập nhật UI
-              const updatedGoals = goals.filter((_, i) => i !== goalIndex);
-              setGoals(updatedGoals);
-              
-              Alert.alert(
-                "Thành công", 
-                goal.currentAmount > 0
-                  ? `Đã xóa heo đất!\nSố tiền ${goal.currentAmount.toLocaleString()}đ đã được chuyển về tài khoản ngân hàng.`
-                  : "Đã xóa heo đất!"
-              );
-            } catch (error) {
-              console.error("Lỗi khi xóa heo đất:", error);
-              Alert.alert("Lỗi", "Không thể xóa heo đất!");
-            }
-          },
-        },
-      ]
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#ff6b9d" />
+      </View>
     );
-  };
-
-  // 🔹 Tính phần trăm tiết kiệm
-  const getProgress = (goal: Goal) => {
-    return goal.targetAmount > 0 ? Math.min((goal.currentAmount / goal.targetAmount) * 100, 100) : 0;
-  };
+  }
 
   return (
-    <ScrollView style={styles.container}>
-      {/* Header */}
+    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
+      {/* Header số dư */}
       <View style={styles.header}>
         <Text style={styles.title}>🐷 Heo Đất Tiết Kiệm</Text>
-        <Text style={styles.subtitle}>Quản lý mục tiêu tiết kiệm của bạn</Text>
-      </View>
-
-      {/* Tài khoản ngân hàng - MỘT TÀI KHOẢN DUY NHẤT */}
-      <View style={styles.box}>
-        <Text style={styles.sectionTitle}>💰 TÀI KHOẢN NGÂN HÀNG</Text>
-        
-        <View style={styles.bankBalanceContainer}>
-          <Text style={styles.bankBalanceLabel}>Số dư khả dụng</Text>
-          <Text style={styles.bankBalanceAmount}>
-            {bankAccount ? bankAccount.balance.toLocaleString("vi-VN") : "0"} VND
-          </Text>
-        </View>
-
-        <View style={styles.bankActions}>
-          <View style={styles.bankActionColumn}>
-            <Text style={styles.label}>💵 Nạp tiền vào tài khoản</Text>
-            <ActionInput
-              placeholder=""
-              actionText="Nạp"
-              onAction={(v) => depositToBank(v)}
-            />
-          </View>
-          
-          <View style={styles.bankActionColumn}>
-            <Text style={styles.label}>💸 Rút tiền từ tài khoản</Text>
-            <ActionInput
-              placeholder=""
-              actionText="Rút"
-              onAction={(v) => withdrawFromBank(v)}
-            />
-          </View>
+        <View style={styles.bankInfo}>
+          <Text style={styles.bankLabel}>Số dư ngân hàng:</Text>
+          <Text style={styles.bankAmount}>{bankBalance.toLocaleString()} VND</Text>
         </View>
       </View>
 
-      {/* Form tạo mục tiêu */}
-      <View style={styles.box}>
-        <Text style={styles.sectionTitle}>📝 TẠO MỤC TIÊU MỚI</Text>
-        <Text style={styles.label}>Tên mục tiêu</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="VD: Du lịch Đà Lạt..."
-          placeholderTextColor="#ff9ec6"
-          value={goalName}
-          onChangeText={setGoalName}
+      {/* Form tạo mới */}
+      <View style={styles.createBox}>
+        <Text style={styles.subTitle}>Nuôi heo mới</Text>
+        <TextInput 
+          style={styles.mainInput} 
+          placeholder="Tên mục tiêu (VD: Mua điện thoại...)" 
+          value={goalName} 
+          onChangeText={setGoalName} 
         />
-        <Text style={styles.label}>Số tiền cần tiết kiệm (VND)</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="VD: 5000000"
-          placeholderTextColor="#ff9ec6"
+        <TextInput 
+          style={styles.mainInput} 
+          placeholder="Số tiền cần đạt được" 
           keyboardType="numeric"
-          value={goalAmount}
-          onChangeText={setGoalAmount}
+          value={goalAmount} 
+          onChangeText={setGoalAmount} 
         />
-        <TouchableOpacity 
-          style={styles.addButton} 
-          onPress={createGoal}
-          disabled={!bankAccount}
-        >
-          <Text style={styles.addButtonText}>
-            {bankAccount ? "➕ Thêm mục tiêu" : "⏳ Đang tải..."}
-          </Text>
+        <TouchableOpacity style={styles.createBtn} onPress={createGoal}>
+          <Text style={styles.createBtnText}>+ Bắt đầu tiết kiệm</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Danh sách heo đất */}
+      {/* Danh sách các mục tiêu */}
+      <Text style={styles.subTitle}>Danh sách mục tiêu ({goals.length})</Text>
+      {goals.length === 0 && (
+        <Text style={styles.emptyText}>Bạn chưa có chú heo nào. Hãy tạo một cái nhé!</Text>
+      )}
+      
       {goals.map((goal, index) => (
-        <View style={styles.box} key={goal.id}>
-          <View style={styles.goalHeader}>
-            <Text style={styles.goalTitle}>🎯 {goal.name}</Text>
-            <TouchableOpacity 
-              style={styles.deleteButton}
-              onPress={() => deleteGoal(index)}
-            >
-              <Text style={styles.deleteText}>🗑️</Text>
-            </TouchableOpacity>
-          </View>
-          
-          <Text style={styles.info}>
-            Đã tiết kiệm:{" "}
-            <Text style={styles.amount}>{goal.currentAmount.toLocaleString("vi-VN")}</Text>{" "}
-            /{" "}
-            <Text style={styles.amount}>{goal.targetAmount.toLocaleString("vi-VN")}</Text> VND
-          </Text>
-
-          {/* Thanh tiến độ */}
-          <View style={styles.progressBar}>
-            <View style={[styles.progress, { width: `${getProgress(goal)}%` }]}>
-              <Text style={styles.progressText}>
-                {Math.floor(getProgress(goal))}%
-              </Text>
-            </View>
-          </View>
-
-          {/* Số dư tài khoản hiện tại (chỉ để tham khảo) */}
-          <Text style={[styles.label, { marginTop: 15 }]}>
-            💰 Số dư tài khoản hiện tại:{" "}
-            <Text style={styles.amount}>
-              {bankAccount ? bankAccount.balance.toLocaleString("vi-VN") : "0"} VND
-            </Text>
-          </Text>
-
-          {/* Nạp tiền vào heo đất */}
-          <Text style={styles.label}>🐷 Chuyển tiền vào heo đất</Text>
-          <ActionInput
-            placeholder="VD: 500000"
-            actionText="Nạp"
-            onAction={(v) => depositToPiggy(index, v)}
-            disabled={!bankAccount}
-          />
-
-          {/* Rút tiền ra khỏi heo đất */}
-          <Text style={styles.label}>💸 Rút tiền ra khỏi heo đất</Text>
-          <ActionInput
-            placeholder="VD: 200000"
-            actionText="Rút"
-            onAction={(v) => withdrawFromPiggy(index, v)}
-            disabled={!bankAccount}
-          />
-        </View>
+        <GoalCard 
+          key={goal.id} 
+          goal={goal} 
+          index={index} 
+          startDeposit={startDeposit} 
+        />
       ))}
+
+      <BankSimulator 
+        visible={showBankModal}
+        mode={modalMode}
+        amount={pendingTx?.amount}
+        onClose={() => setShowBankModal(false)}
+        onSuccess={handleTransactionSuccess}
+      />
     </ScrollView>
   );
 };
 
-// 🔹 Component con để nhập + nhấn nút nhanh
-const ActionInput = ({
-  placeholder,
-  actionText,
-  onAction,
-  disabled = false,
-}: {
-  placeholder: string;
-  actionText: string;
-  onAction: (value: number) => void;
-  disabled?: boolean;
-}) => {
-  const [value, setValue] = useState("");
+/**
+ * Component phụ trợ cho Input nhập tiền
+ */
+const ActionInput = ({ actionText, onAction }: { actionText: string, onAction: (v: number) => void }) => {
+  const [val, setVal] = useState("");
   return (
     <View style={styles.row}>
-      <TextInput
-        style={[
-          styles.input, 
-          { flex: 1, marginRight: 10 },
-          disabled && styles.disabledInput
-        ]}
-        placeholder={placeholder}
-        placeholderTextColor="#ff9ec6"
-        keyboardType="numeric"
-        value={value}
-        onChangeText={setValue}
-        editable={!disabled}
+      <TextInput 
+        style={styles.input} 
+        keyboardType="numeric" 
+        value={val} 
+        onChangeText={setVal} 
+        placeholder="Nhập số tiền..." 
       />
-      <TouchableOpacity
-        style={[
-          styles.actionButton,
-          actionText === "Rút" && styles.withdrawButton,
-          disabled && styles.disabledButton
-        ]}
-        onPress={() => {
-          if (disabled) return;
-          const num = Number(value);
-          if (isNaN(num) || num <= 0) {
-            Alert.alert("Lỗi", "Nhập số hợp lệ!");
-          } else {
-            onAction(num);
-            setValue("");
-          }
+      <TouchableOpacity 
+        style={styles.btn} 
+        onPress={() => { 
+          if (!val) return Alert.alert("Lỗi", "Nhập số tiền cần nạp!");
+          onAction(Number(val)); 
+          setVal(""); 
         }}
-        disabled={disabled}
       >
-        <Text style={styles.actionButtonText}>
-          {disabled ? "⏳" : actionText}
-        </Text>
+        <Text style={{ color: '#fff', fontWeight: 'bold' }}>{actionText}</Text>
       </TouchableOpacity>
     </View>
   );
 };
 
-export default HeoDat;
-
+/**
+ * Hệ thống Styles
+ */
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: "#fffafc" 
-  },
-  header: {
-    backgroundColor: '#fff0f5',
-    padding: 24,
-    paddingTop: 60,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
-    shadowColor: '#ff9ec6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 8,
-    marginBottom: 8,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    textAlign: "center",
-    color: "#d63384",
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    textAlign: "center",
-    color: "#ff9ec6",
-    fontWeight: '500',
-  },
-  box: {
-    backgroundColor: "#fff",
-    padding: 20,
-    marginHorizontal: 16,
-    marginBottom: 16,
-    borderRadius: 20,
-    shadowColor: '#ff9ec6',
-    shadowOffset: { width: 0, height: 4 },
+  container: { flex: 1, backgroundColor: "#fffafc", padding: 16 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { 
+    padding: 20, 
+    backgroundColor: "#fff", 
+    borderRadius: 20, 
+    marginBottom: 20, 
+    alignItems: 'center', 
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-    borderWidth: 2,
-    borderColor: '#fff0f5',
+    shadowRadius: 4,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#d63384",
-    marginBottom: 16,
-    textAlign: "center",
+  title: { fontSize: 22, fontWeight: "bold", color: "#d63384" },
+  bankInfo: { marginTop: 10, alignItems: 'center' },
+  bankLabel: { fontSize: 12, color: "#666" },
+  bankAmount: { fontSize: 20, fontWeight: "bold", color: "#0077b6" },
+  
+  createBox: { 
+    backgroundColor: "#fff", 
+    padding: 15, 
+    borderRadius: 15, 
+    marginBottom: 25, 
+    borderWidth: 1, 
+    borderColor: '#ffe3ee' 
   },
-  bankBalanceContainer: {
-    backgroundColor: '#f0f8ff',
-    padding: 20,
-    borderRadius: 16,
-    alignItems: "center",
-    marginBottom: 16,
-    borderWidth: 2,
-    borderColor: '#e6f3ff',
+  subTitle: { fontSize: 16, fontWeight: "bold", color: "#555", marginBottom: 12 },
+  mainInput: { 
+    backgroundColor: '#f9f9f9', 
+    padding: 12, 
+    borderRadius: 10, 
+    marginBottom: 10, 
+    borderWidth: 1, 
+    borderColor: '#eee' 
   },
-  bankBalanceLabel: {
+  createBtn: { backgroundColor: '#ff6b9d', padding: 15, borderRadius: 10, alignItems: 'center' },
+  createBtnText: { color: '#fff', fontWeight: 'bold' },
+  
+  // Style cho Card Mục tiêu
+  goalCard: { 
+    backgroundColor: "#fff", 
+    padding: 18, 
+    borderRadius: 15, 
+    marginBottom: 15, 
+    elevation: 2,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  completedCard: {
+    backgroundColor: "#f0f0f0", // Màu nền xám khi hoàn thành
+    borderColor: "#d1d1d1",
+    borderWidth: 1,
+  },
+  completedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(240, 240, 240, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  completedBadge: {
+    backgroundColor: '#4caf50',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 25,
+    transform: [{ rotate: '-10deg' }],
+    borderWidth: 3,
+    borderColor: '#fff',
+    elevation: 5,
+  },
+  completedText: {
+    color: '#fff',
+    fontWeight: '900',
     fontSize: 16,
-    color: "#666",
-    marginBottom: 8,
-    fontWeight: '600',
   },
-  bankBalanceAmount: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#0077b6",
+  grayText: {
+    color: '#aaa',
   },
-  bankActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  congratsContainer: {
+    padding: 10,
+    alignItems: 'center',
   },
-  bankActionColumn: {
-    flex: 1,
-    marginHorizontal: 5,
+  congratsText: {
+    color: '#4caf50',
+    fontWeight: 'bold',
+    fontStyle: 'italic',
   },
-  goalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  goalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#d63384",
-    flex: 1,
-  },
-  deleteButton: {
-    padding: 8,
-    borderRadius: 10,
-    backgroundColor: '#ffe6ee',
-  },
-  deleteText: {
-    fontSize: 18,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#d63384',
-    marginBottom: 8,
-    marginTop: 12,
-  },
-  input: {
-    borderWidth: 2,
-    borderColor: '#ffe6ee',
-    borderRadius: 12,
-    padding: 12,
-    fontSize: 14,
-    backgroundColor: 'white',
-    color: '#d63384',
-    shadowColor: '#ff9ec6',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  disabledInput: {
-    backgroundColor: '#f5f5f5',
-    color: '#999',
-  },
-  addButton: {
-    backgroundColor: '#ff6b9d',
-    padding: 16,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 16,
-    shadowColor: '#ff6b9d',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  addButtonText: { 
-    color: "white", 
-    fontWeight: "bold", 
-    fontSize: 16 
-  },
-  actionButton: {
-    backgroundColor: '#4facfe',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: '#4facfe',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-    minWidth: 60,
-  },
-  withdrawButton: {
-    backgroundColor: '#FFA726',
-  },
-  disabledButton: {
-    backgroundColor: '#ccc',
-  },
-  actionButtonText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 12,
-  },
-  info: {
-    fontSize: 14,
-    marginBottom: 12,
-    color: '#666',
-  },
-  amount: {
-    color: "#0077b6",
-    fontWeight: "bold",
-  },
-  progressBar: {
-    backgroundColor: "#ffe6ee",
-    height: 24,
-    borderRadius: 12,
-    overflow: "hidden",
-    marginBottom: 12,
-    shadowColor: '#ff9ec6',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  progress: {
-    backgroundColor: "#ff6b9d",
-    height: "100%",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  progressText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 10,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
+
+  goalHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  goalTitle: { fontWeight: "bold", fontSize: 16, color: '#333' },
+  goalPercent: { color: '#ff6b9d', fontWeight: 'bold' },
+  
+  progressBarBg: { height: 10, backgroundColor: '#eee', borderRadius: 5, marginBottom: 8, overflow: 'hidden' },
+  progressBarFill: { height: '100%', backgroundColor: '#ff6b9d' },
+  
+  goalMoney: { fontSize: 13, color: '#888', marginBottom: 15 },
+  emptyText: { textAlign: 'center', color: '#999', marginTop: 20 },
+
+  row: { flexDirection: 'row', gap: 10 },
+  input: { flex: 1, borderBottomWidth: 1, borderColor: "#ff6b9d", paddingVertical: 5 },
+  btn: { backgroundColor: "#4caf50", paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 }
 });
+
+export default HeoDat;

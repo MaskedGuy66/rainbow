@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
+import { useEffect, useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import { auth } from '../firebase';
 import { signup } from '../utils/auth';
 
 export default function Signup() {
@@ -19,53 +20,84 @@ export default function Signup() {
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // Trạng thái cho Modal thông báo
   const [modalVisible, setModalVisible] = useState(false);
-  const [confirmMsg, setConfirmMsg] = useState('');
+  const [modalType, setModalType] = useState<'success' | 'error' | 'waiting'>('success');
+  const [modalMsg, setModalMsg] = useState('');
+  
   const router = useRouter();
 
+  // Tự động theo dõi trạng thái xác thực để chuyển hướng khi user nhấn link email
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user && user.emailVerified) {
+        setModalVisible(false);
+        router.replace('/'); 
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  const showNotification = (type: 'success' | 'error' | 'waiting', message: string) => {
+    setModalType(type);
+    setModalMsg(message);
+    setModalVisible(true);
+    // Nếu là lỗi thì tự đóng sau 2.5 giây
+    if (type === 'error') {
+      setTimeout(() => setModalVisible(false), 2500);
+    }
+  };
+
   const handleSignup = async () => {
-    if (!email || !password || !displayName) {
-      Alert.alert('Lỗi', 'Vui lòng nhập đầy đủ thông tin');
+    // Kiểm tra dữ liệu đầu vào
+    if (!displayName || displayName.trim().length < 2) {
+      showNotification('error', 'Tên hiển thị phải có ít nhất 2 ký tự!');
       return;
     }
-
+    if (!email.includes('@')) {
+      showNotification('error', 'Định dạng email không hợp lệ!');
+      return;
+    }
     if (password.length < 6) {
-      Alert.alert('Lỗi', 'Mật khẩu phải ít nhất 6 ký tự');
+      showNotification('error', 'Mật khẩu phải có độ dài từ 6 ký tự!');
       return;
     }
 
     setLoading(true);
     try {
       await signup(email, password, displayName);
-      setConfirmMsg(`🎉 Tài khoản đã tạo thành công!\n${email}`);
-      setModalVisible(true);
-      setTimeout(() => {
-        setModalVisible(false);
-        router.back();
-      }, 2000);
-    } catch (error) {
-      const errorMsg = typeof error === 'object' && error !== null && 'message' in error
-        ? (error as { message: string }).message
-        : 'Đã xảy ra lỗi khi tạo tài khoản';
-      Alert.alert('❌ Lỗi đăng ký', errorMsg);
+      showNotification(
+        'waiting', 
+        `📧 Email xác nhận đã được gửi tới:\n${email}\n\nVui lòng kiểm tra hộp thư và bấm vào liên kết để kích hoạt tài khoản.`
+      );
+    } catch (error: any) {
+      let errorMessage = 'Đã xảy ra lỗi không xác định';
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = 'Email này đã được sử dụng bởi một tài khoản khác!';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Địa chỉ email không đúng định dạng!';
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = 'Mật khẩu quá yếu, vui lòng chọn mật khẩu khác!';
+      }
+      showNotification('error', errorMessage);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
     <KeyboardAvoidingView 
-      style={styles.container}
+      style={styles.container} 
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.logo}>💖</Text>
           <Text style={styles.title}>MoneyMeow</Text>
           <Text style={styles.subtitle}>Bắt đầu hành trình tài chính</Text>
         </View>
 
-        {/* Form đăng ký */}
         <View style={styles.formContainer}>
           <Text style={styles.formTitle}>Tạo tài khoản</Text>
           
@@ -96,24 +128,17 @@ export default function Signup() {
             secureTextEntry 
           />
           
-          <Text style={styles.passwordHint}>
-            🔒 Mật khẩu phải có ít nhất 6 ký tự
-          </Text>
-          
           <TouchableOpacity 
-            style={[styles.button, loading && styles.buttonDisabled]} 
+            style={[styles.confirmBtn, loading && styles.buttonDisabled]} 
             onPress={handleSignup} 
             disabled={loading}
           >
-            <Text style={styles.buttonText}>
-              {loading ? '🔄 Đang tạo tài khoản...' : '🌟 Đăng ký ngay'}
+            <Text style={styles.confirmText}>
+              {loading ? '🔄 Đang xử lý...' : '🌟 Đăng ký ngay'}
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.loginLink} 
-            onPress={() => router.back()}
-          >
+          <TouchableOpacity style={styles.loginLink} onPress={() => router.back()}>
             <Text style={styles.loginText}>
               Đã có tài khoản? <Text style={styles.loginHighlight}>Đăng nhập</Text>
             </Text>
@@ -121,12 +146,19 @@ export default function Signup() {
         </View>
       </ScrollView>
 
-      {/* Modal Xác nhận */}
+      {/* Modal Thông báo */}
       <Modal visible={modalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalIcon}>✅</Text>
-            <Text style={styles.modalText}>{confirmMsg}</Text>
+          <View style={[styles.modalContent, modalType === 'error' && styles.modalErrorBorder]}>
+            <Text style={styles.modalIcon}>
+              {modalType === 'success' ? '✅' : modalType === 'error' ? '❌' : '📧'}
+            </Text>
+            <Text style={styles.modalText}>{modalMsg}</Text>
+            {modalType === 'waiting' && (
+               <Text style={styles.waitingSubText}>
+                 Hệ thống sẽ tự động đăng nhập sau khi bạn xác nhận email...
+               </Text>
+            )}
           </View>
         </View>
       </Modal>
@@ -135,13 +167,8 @@ export default function Signup() {
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: "#fffafc" 
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
+  container: { flex: 1, backgroundColor: "#fffafc" },
+  scrollContent: { flexGrow: 1 },
   header: {
     alignItems: "center",
     paddingTop: 60,
@@ -151,33 +178,11 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 40,
     marginBottom: 20,
   },
-  logo: {
-    fontSize: 50,
-    marginBottom: 10,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: "#d63384",
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: "#ff6b9d",
-    fontWeight: '500',
-  },
-  formContainer: {
-    flex: 1,
-    paddingHorizontal: 30,
-    paddingBottom: 40,
-  },
-  formTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#d63384",
-    textAlign: "center",
-    marginBottom: 30,
-  },
+  logo: { fontSize: 50, marginBottom: 10 },
+  title: { fontSize: 32, fontWeight: "bold", color: "#d63384", marginBottom: 8 },
+  subtitle: { fontSize: 16, color: "#ff6b9d", fontWeight: '500' },
+  formContainer: { flex: 1, paddingHorizontal: 30, paddingBottom: 40 },
+  formTitle: { fontSize: 24, fontWeight: "bold", color: "#d63384", textAlign: "center", marginBottom: 30 },
   input: {
     borderWidth: 2,
     borderColor: '#ffe6ee',
@@ -187,52 +192,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     color: '#d63384',
     marginBottom: 16,
-    shadowColor: '#ff9ec6',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  passwordHint: {
-    fontSize: 12,
-    color: '#ff6b9d',
-    marginBottom: 16,
-    textAlign: 'center',
-    fontStyle: 'italic',
-  },
-  button: {
+  confirmBtn: {
     backgroundColor: '#ff6b9d',
     padding: 18,
     borderRadius: 20,
     alignItems: "center",
-    justifyContent: "center",
     marginTop: 10,
-    shadowColor: '#ff6b9d',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
+    elevation: 5,
   },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 18,
-  },
-  loginLink: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  loginText: {
-    color: '#ff6b9d',
-    fontSize: 14,
-  },
-  loginHighlight: {
-    fontWeight: 'bold',
-    color: '#d63384',
-  },
+  buttonDisabled: { opacity: 0.6 },
+  confirmText: { color: "white", fontWeight: "bold", fontSize: 18 },
+  loginLink: { marginTop: 20, alignItems: 'center' },
+  loginText: { color: '#ff6b9d', fontSize: 14 },
+  loginHighlight: { fontWeight: 'bold', color: '#d63384' },
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',
@@ -240,21 +213,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalContent: {
-    backgroundColor: '#fff0f5',
+    backgroundColor: 'white',
     padding: 30,
-    borderRadius: 20,
+    borderRadius: 25,
+    width: '85%',
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#ffd6e7',
   },
-  modalIcon: {
-    fontSize: 40,
-    marginBottom: 10,
-  },
-  modalText: {
-    fontSize: 16,
-    color: '#d63384',
-    fontWeight: '600',
-    textAlign: 'center',
-  },
+  modalErrorBorder: { borderColor: '#ff4d4d' },
+  modalIcon: { fontSize: 40, marginBottom: 15 },
+  modalText: { fontSize: 16, color: '#d63384', fontWeight: '600', textAlign: 'center' },
+  waitingSubText: { fontSize: 12, color: '#777', marginTop: 15, fontStyle: 'italic' }
 });

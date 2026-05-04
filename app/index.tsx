@@ -5,78 +5,74 @@ import { useEffect, useState } from "react";
 import {
   Alert,
   Animated,
-  Modal,
-  Platform,
   SectionList,
-  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import { auth, db } from "../firebase";
-import { logout } from "../utils/auth"; // Import hàm đăng xuất
 
 // 🔹 Hàm xuất file Excel - tích hợp trực tiếp
-const exportToExcel = async (transactions: any[]) => {
-  try {
-    if (transactions.length === 0) {
-      Alert.alert("ℹ️ Thông báo", "Không có dữ liệu để xuất file");
-      return;
-    }
+// const exportToExcel = async (transactions: any[]) => {
+//   try {
+//     if (transactions.length === 0) {
+//       Alert.alert("ℹ️ Thông báo", "Không có dữ liệu để xuất file");
+//       return;
+//     }
 
-    // Tạo nội dung CSV
-    let csvContent = "Ghi chú,Số tiền,Loại,Danh mục,Ngày tạo\n";
-    
-    transactions.forEach(transaction => {
-      const row = [
-        `"${transaction.note || 'Không có'}"`,
-        transaction.amount || 0,
-        `"${transaction.type}"`,
-        `"${transaction.category || 'Khác'}"`,
-        `"${transaction.createdAt?.toDate?.()?.toLocaleDateString('vi-VN') || 'Không rõ'}"`
-      ].join(',');
-      csvContent += row + '\n';
-    });
+//     // Tạo nội dung CSV
+//     let csvContent = "Ghi chú,Số tiền,Loại,Danh mục,Ngày tạo\n";
 
-    // Tạo tên file với ngày tháng
-    const date = new Date();
-    const fileName = `MoneyMeow_Export_${date.getDate()}-${date.getMonth() + 1}-${date.getFullYear()}.csv`;
+//     transactions.forEach(transaction => {
+//       const row = [
+//         `"${transaction.note || 'Không có'}"`,
+//         transaction.amount || 0,
+//         `"${transaction.type}"`,
+//         `"${transaction.category || 'Khác'}"`,
+//         `"${transaction.createdAt?.toDate?.()?.toLocaleDateString('vi-VN') || 'Không rõ'}"`
+//       ].join(',');
+//       csvContent += row + '\n';
+//     });
 
-    if (Platform.OS === 'web') {
-      // 🔹 Cho web: Tải file trực tiếp
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', fileName);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      
-      Alert.alert("✅ Thành công", "File Excel đã được tải xuống!");
-    } else {
-      // 🔹 Cho mobile: Chia sẻ file
-      await Share.share({
-        title: 'Xuất file Excel - MoneyMeow',
-        message: csvContent,
-      });
-    }
+//     // Tạo tên file với ngày tháng
+//     const date = new Date();
+//     const fileName = `MoneyMeow_Export_${date.getDate()}-${date.getMonth() + 1}-${date.getFullYear()}.csv`;
 
-  } catch (error) {
-    console.error('Lỗi xuất file:', error);
-    Alert.alert("❌ Lỗi", "Không thể xuất file Excel");
-  }
-};
+//     if (Platform.OS === 'web') {
+//       // 🔹 Cho web: Tải file trực tiếp
+//       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+//       const url = URL.createObjectURL(blob);
+//       const link = document.createElement('a');
+//       link.href = url;
+//       link.setAttribute('download', fileName);
+//       document.body.appendChild(link);
+//       link.click();
+//       document.body.removeChild(link);
+//       URL.revokeObjectURL(url);
+
+//       Alert.alert("✅ Thành công", "File Excel đã được tải xuống!");
+//     } else {
+//       // 🔹 Cho mobile: Chia sẻ file
+//       await Share.share({
+//         title: 'Xuất file Excel - MoneyMeow',
+//         message: csvContent,
+//       });
+//     }
+
+//   } catch (error) {
+//     console.error('Lỗi xuất file:', error);
+//     Alert.alert("❌ Lỗi", "Không thể xuất file Excel");
+//   }
+// };
 
 // 🔹 Hàm nhóm giao dịch theo tháng
 const groupTransactionsByMonth = (transactions: any[]) => {
   const grouped: { [key: string]: any[] } = {};
-  
+
   transactions.forEach(transaction => {
     let transactionDate: Date;
-    
+
     if (transaction.createdAt && transaction.createdAt.toDate) {
       transactionDate = transaction.createdAt.toDate();
     } else if (transaction.createdAt && typeof transaction.createdAt === 'string') {
@@ -84,26 +80,26 @@ const groupTransactionsByMonth = (transactions: any[]) => {
     } else {
       transactionDate = new Date();
     }
-    
+
     const monthYear = transactionDate.toLocaleDateString('vi-VN', {
       month: 'long',
       year: 'numeric'
     });
-    
+
     if (!grouped[monthYear]) {
       grouped[monthYear] = [];
     }
-    
+
     grouped[monthYear].push(transaction);
   });
-  
+
   return grouped;
 };
 
 // 🔹 Hàm chuyển đổi dữ liệu nhóm thành mảng cho FlatList
 const prepareSectionData = (groupedTransactions: { [key: string]: any[] }) => {
   const sections: { title: string; data: any[] }[] = [];
-  
+
   Object.keys(groupedTransactions)
     .sort((a, b) => {
       // Sắp xếp từ tháng mới nhất đến cũ nhất
@@ -117,7 +113,7 @@ const prepareSectionData = (groupedTransactions: { [key: string]: any[] }) => {
         data: groupedTransactions[monthYear]
       });
     });
-  
+
   return sections;
 };
 
@@ -127,7 +123,6 @@ export default function HomeScreen() {
   const [sectionData, setSectionData] = useState<{ title: string; data: any[] }[]>([]);
   const [user, setUser] = useState<any>(null);
   const [menuVisible, setMenuVisible] = useState(false);
-  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [animation] = useState(new Animated.Value(0));
 
   // 🔹 Theo dõi trạng thái đăng nhập
@@ -148,7 +143,7 @@ export default function HomeScreen() {
 
     const transactionsRef = collection(db, "users", user.uid, "transactions");
     const q = query(transactionsRef, orderBy("createdAt", "desc"));
-    
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map((doc) => ({
         id: doc.id,
@@ -156,7 +151,7 @@ export default function HomeScreen() {
       }));
       console.log(`📊 Loaded ${list.length} transactions for user: ${user.uid}`);
       setTransactions(list);
-      
+
       // Nhóm giao dịch theo tháng
       const grouped = groupTransactionsByMonth(list);
       const sections = prepareSectionData(grouped);
@@ -180,53 +175,17 @@ export default function HomeScreen() {
 
   const balance = totalIncome - totalExpense;
 
-  // 🔹 Xử lý đăng xuất
-  const handleLogout = () => {
-    if (Platform.OS === 'web') {
-      setLogoutModalVisible(true);
-    } else {
-      Alert.alert(
-        "Dang xuat",
-        "Ban co chac muon dang xuat khoi ung dung?",
-        [
-          { text: "Huy", style: "cancel" },
-          {
-            text: "Dang xuat",
-            style: "destructive",
-            onPress: performLogout,
-          }
-        ]
-      );
-    }
-  };
-
-  const performLogout = async () => {
-    try {
-      await logout();
-      setTimeout(() => {
-        router.replace("/login");
-      }, 500);
-    } catch (error: any) {
-      console.error("Loi dang xuat:", error.message);
-      if (Platform.OS === 'web') {
-        setLogoutModalVisible(false);
-      } else {
-        Alert.alert("Loi", `Khong the dang xuat: ${error.message}`);
-      }
-    }
-  };
 
   // 🔹 Xử lý mở/đóng menu
   const toggleMenu = () => {
     if (menuVisible) {
-      // Đóng menu
+      // Chạy animation ẩn đi trước, sau đó mới setVisible(false)
       Animated.timing(animation, {
         toValue: 0,
         duration: 300,
         useNativeDriver: true,
       }).start(() => setMenuVisible(false));
     } else {
-      // Mở menu
       setMenuVisible(true);
       Animated.timing(animation, {
         toValue: 1,
@@ -282,7 +241,7 @@ export default function HomeScreen() {
       <View style={styles.transactionLeft}>
         <View style={[
           styles.typeIndicator,
-          { 
+          {
             backgroundColor: item.type === "Chi tiêu" ? '#ffe6ee' : '#fce4ec',
             borderColor: item.type === "Chi tiêu" ? '#ff6b9d' : '#ff9ec6'
           }
@@ -343,7 +302,7 @@ export default function HomeScreen() {
           <Text style={styles.emptyEmoji}>🔐</Text>
           <Text style={styles.emptyText}>Chưa đăng nhập</Text>
           <Text style={styles.emptySubText}>Vui lòng đăng nhập để xem giao dịch</Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.loginButton}
             onPress={() => router.push("/login")}
           >
@@ -358,13 +317,20 @@ export default function HomeScreen() {
     <View style={styles.container}>
       {/* --- Header với thông tin tổng quan --- */}
       <View style={styles.header}>
-        {/* Nút đăng xuất ở góc phải */}
-        <TouchableOpacity 
-          style={styles.logoutButton}
-          onPress={handleLogout}
+        {/* ✅ Updated: Nút Hồ sơ ở góc phải */}
+        <TouchableOpacity
+          style={styles.logoutButton} // Keeping the style name for layout consistency
+          onPress={() => router.push("/profile")}
         >
-          <Text style={styles.logoutIcon}>🚪</Text>
-          <Text style={styles.logoutText}>Đăng xuất</Text>
+          <Text style={styles.logoutIcon}>👤</Text>
+          <Text style={styles.logoutText}>Hồ sơ</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.CSKHButton} // Keeping the style name for layout consistency
+          onPress={() => router.push("/CSKH")}
+        >
+          <Text style={styles.logoutIcon}>📞</Text>
+          <Text style={styles.logoutText}>CSKH</Text>
         </TouchableOpacity>
 
         <View style={styles.headerContent}>
@@ -376,7 +342,7 @@ export default function HomeScreen() {
           ]}>
             {balance.toLocaleString()} đ
           </Text>
-          
+
           <View style={styles.incomeExpenseContainer}>
             <View style={styles.incomeExpenseItem}>
               <View style={[styles.iconCircle, { backgroundColor: '#ff9ec6' }]}>
@@ -387,7 +353,7 @@ export default function HomeScreen() {
                 <Text style={styles.incomeExpenseAmount}>{totalIncome.toLocaleString()} đ</Text>
               </View>
             </View>
-            
+
             <View style={styles.incomeExpenseItem}>
               <View style={[styles.iconCircle, { backgroundColor: '#ff9ec6' }]}>
                 <Text style={styles.iconText}>↓</Text>
@@ -425,12 +391,33 @@ export default function HomeScreen() {
         />
       </View>
 
+      {menuVisible && (
+        <Animated.View
+          style={[
+            styles.overlay,
+            {
+              opacity: animation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, 1],
+              }),
+            },
+          ]}
+        >
+          {/* Cho phép nhấn vào vùng tối để đóng menu */}
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={toggleMenu}
+          />
+        </Animated.View>
+      )}
+
       {/* --- Floating Action Buttons --- */}
       <View style={styles.buttonContainer}>
         {/* Menu các nút chức năng */}
         {menuVisible && (
           <View style={styles.menuContainer}>
-            
+
             {/* 📤 Nút Kết Bạn */}
             <Animated.View style={[styles.menuButtonWrapper, menuButtonAnimation]}>
               <TouchableOpacity
@@ -445,7 +432,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </Animated.View>
 
- {/* 💵 Nút Quỹ Chung */}
+            {/* 💵 Nút Quỹ Chung */}
             <Animated.View style={[styles.menuButtonWrapper, menuButtonAnimation]}>
               <TouchableOpacity
                 style={[styles.menuButton, styles.fundButton]}
@@ -502,7 +489,7 @@ export default function HomeScreen() {
             </Animated.View>
 
             {/* 📩 Nút Xuất Excel */}
-            <Animated.View style={[styles.menuButtonWrapper, menuButtonAnimation]}>
+            {/* <Animated.View style={[styles.menuButtonWrapper, menuButtonAnimation]}>
               <TouchableOpacity
                 style={[styles.menuButton, styles.excelButton]}
                 onPress={() => {
@@ -513,7 +500,7 @@ export default function HomeScreen() {
                 <Text style={styles.menuButtonIcon}>📩</Text>
                 <Text style={styles.menuButtonLabel}>Xuất Excel</Text>
               </TouchableOpacity>
-            </Animated.View>
+            </Animated.View> */}
           </View>
         )}
 
@@ -534,40 +521,14 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Logout Confirmation Modal */}
-      <Modal visible={logoutModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Dang xuat</Text>
-            <Text style={styles.modalMessage}>Ban co chac muon dang xuat khoi ung dung?</Text>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.modalCancelButton}
-                onPress={() => setLogoutModalVisible(false)}
-              >
-                <Text style={styles.modalCancelText}>Huy</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.modalDeleteButton}
-                onPress={() => {
-                  setLogoutModalVisible(false);
-                  performLogout();
-                }}
-              >
-                <Text style={styles.modalDeleteText}>Dang xuat</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: "#fffafc" 
+  container: {
+    flex: 1,
+    backgroundColor: "#fffafc"
   },
 
   // Header Styles
@@ -582,6 +543,7 @@ const styles = StyleSheet.create({
     elevation: 8,
     marginBottom: 8,
     position: 'relative',
+    zIndex: 1, // Đảm bảo header không bị đè nếu bạn muốn
   },
   headerContent: {
     padding: 24,
@@ -841,15 +803,22 @@ const styles = StyleSheet.create({
   },
 
   // Floating Buttons & Menu
+  overlay: {
+    ...StyleSheet.absoluteFillObject, // Phủ kín toàn màn hình
+    backgroundColor: 'rgba(0, 0, 0, 0.4)', // Màu đen mờ
+    zIndex: 5, // Cao hơn danh sách (SectionList)
+  },
   buttonContainer: {
     position: 'absolute',
     right: 20,
-    bottom: 20,
+    bottom: 40, // 👈 Chỉnh lại vị trí tổng thể của cả cụm nút nếu cần
     alignItems: 'flex-end',
+    zIndex: 10,
   },
+  
   menuContainer: {
     position: 'absolute',
-    bottom: 70,
+    bottom: 120, // 👈 Khoảng cách từ nút 📋 lên đến nút menu đầu tiên
     right: 0,
     alignItems: 'flex-end',
   },
@@ -997,5 +966,22 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  CSKHButton: {
+    position: 'absolute',
+    top: 20,
+    left: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    shadowColor: '#ff6b9d',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+    zIndex: 10,
   },
 });

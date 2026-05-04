@@ -1,15 +1,18 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+
+// --- IMPORT DỮ LIỆU TỪ FILE MỚI TẠI ĐÂY ---
+import { getBotResponse } from '../constants/chatData';
 
 interface ChatMessage {
   id: string;
@@ -18,64 +21,36 @@ interface ChatMessage {
   timestamp: Date;
 }
 
-const BOT_RESPONSES: Record<string, string> = {
-  'password': 'To reset your password, go to the Login page and tap "Forgot Password". You will receive a reset email within minutes.',
-  'verify': 'To verify your email, go to Profile > Resend Verification. Check your inbox and spam folder.',
-  'bank': 'To connect your bank, tap the bank notification on the home screen or go to Profile > Bank Connection > Connect Bank.',
-  'transaction': 'To add a transaction, tap the + button on the home screen. Fill in amount, category, type, and save.',
-  'friend': 'To add friends, open the menu > Ket Ban, then search by email and send a friend request.',
-  'group': 'To create a group fund, open the menu > Quy Chung, then fill in the fund name, target amount, and invite friends.',
-  'heo': 'Heo Dat (Piggy Bank) lets you save toward goals. Open menu > Heo Dat to create savings goals and deposit money.',
-  'export': 'To export transactions, open menu > Xuat Excel. A CSV file will be downloaded to your device.',
-  'delete': 'To delete a transaction, tap on it to open the edit screen, then tap the delete button at the bottom.',
-  'sign out': 'To sign out, go to Profile and tap the Sign Out button.',
-  'chat': 'To message a friend, open menu > Tin Nhan, then tap on a conversation to start chatting.',
-  'hello': 'Hello! I am MoneyMeow Support Bot. How can I help you today? You can ask about passwords, verification, bank connection, transactions, friends, group funds, or contact our staff.',
-  'hi': 'Hi there! I am MoneyMeow Support Bot. How can I help you? Ask about any feature or type "call" or "email" to contact staff.',
-};
-
-function getBotResponse(userMessage: string): string {
-  const lower = userMessage.toLowerCase();
-  for (const [key, response] of Object.entries(BOT_RESPONSES)) {
-    if (lower.includes(key)) return response;
-  }
-  if (lower.includes('call') || lower.includes('phone') || lower.includes('hotline')) {
-    return 'Our hotline is available 24/7:\n📞 1900-MEOW (1900-6369)\n\nMon-Fri: 8:00 - 20:00\nSat-Sun: 9:00 - 17:00';
-  }
-  if (lower.includes('email') || lower.includes('mail') || lower.includes('staff')) {
-    return 'You can email our support team:\n📧 support@moneymeow.app\n\nWe typically respond within 24 hours.';
-  }
-  if (lower.includes('thank')) {
-    return 'You are welcome! Is there anything else I can help with?';
-  }
-  return 'I am not sure about that. Try asking about: password, verify, bank, transaction, friend, group, heo dat, export, or type "call" / "email" to contact our staff directly.';
-}
-
 export default function CSKHScreen() {
   const router = useRouter();
+  const [inputText, setInputText] = useState('');
+  const scrollViewRef = useRef<ScrollView>(null);
+
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: '1',
-      text: 'Hello! I am MoneyMeow Support Bot. How can I help you?\n\nYou can ask about:\n- Password reset\n- Email verification\n- Bank connection\n- Transactions\n- Friends & Chat\n- Group Funds\n\nOr type "call" or "email" to contact our staff.',
+      text: 'Hello! I am MoneyMeow Support Bot. How can I help you?\n\nBạn có thể hỏi về:\n- Quên mật khẩu\n- Liên kết ngân hàng\n- Quản lý quỹ chung\n- Heo đất tiết kiệm\n\nOr type "call" or "email".',
       sender: 'bot',
       timestamp: new Date(),
     },
   ]);
-  const [inputText, setInputText] = useState('');
-  const scrollViewRef = useRef<ScrollView>(null);
 
+  // Giữ nguyên các hàm sendMessage và useEffect như cũ...
   const sendMessage = () => {
     if (!inputText.trim()) return;
+
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       text: inputText.trim(),
       sender: 'user',
       timestamp: new Date(),
     };
+
     setMessages(prev => [...prev, userMsg]);
     setInputText('');
 
     setTimeout(() => {
+      // Sử dụng hàm đã import
       const botResponse = getBotResponse(userMsg.text);
       const botMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -86,10 +61,6 @@ export default function CSKHScreen() {
       setMessages(prev => [...prev, botMsg]);
     }, 600);
   };
-
-  useEffect(() => {
-    setTimeout(() => scrollViewRef.current?.scrollToEnd?.({ animated: true }), 100);
-  }, [messages]);
 
   return (
     <KeyboardAvoidingView

@@ -43,6 +43,7 @@ export default function AddTransaction() {
   const [note, setNote] = useState("");
   const [selectedDate, setSelectedDate] = useState(new Date());
 
+  
   // 🔹 Lấy dữ liệu khi có id
   useEffect(() => {
     const fetchTransaction = async () => {
